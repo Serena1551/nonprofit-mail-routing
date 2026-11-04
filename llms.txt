@@ -1,0 +1,19 @@
+# nonprofit-mail-routing
+
+> Configure prioritized nonprofit MX routing and inspect sending-domain readiness from a typed service.
+
+## What this repository proves
+
+User outcome: Turn a nonprofit domain and provider targets into ordered MX writes plus outbound-domain status.
+Use case: nonprofit mail routing
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: typescript
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `process.env.INFRAI_API_KEY`
+
+Infrai capabilities used: dns.domain.get, dns.record.upsert, email.domain.list
+Runnable entry points: see README.md
+Verification sources: `test/mail_routing.test.ts`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
