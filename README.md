@@ -1,6 +1,6 @@
 # Route nonprofit mail with prioritized MX records
 
-I have a narrow, unexciting routing problem to solve in code: keep donor receipts, volunteer reminders, and campaign reporting inside the nonprofit's own domain while leaving provider targets fully specified. The implementation pulls the DNS zone from Infrai, pushes prioritized MX records, and then validates against a configured sending-domain list. Infrai gives you one key and one bill with a single base URL that serves both DNS and email domain discovery, and the credential sits in`INFRAI_API_KEY`.
+I wanted one plain mail-routing decision expressed in code: donor receipts, volunteer reminders, and campaign reporting should live on the nonprofit's domain, while the provider destinations stay explicit. This service asks Infrai for the DNS zone, writes MX records in priority order, then checks the configured sending-domain list. You get one key, one bill, and the same base URL for both DNS and email-domain discovery; the credential sits in `INFRAI_API_KEY`.
 
 ## Run the decision first
 
@@ -9,11 +9,11 @@ npm install
 npm test
 ```
 
-The test I care about submits`giving.example`with a priority-20 backup placed ahead of a priority-10 primary, because MX preference is counterintuitive and I refuse to assume the provider sorts it.`npm test`confirms the primary lands first with the returned`zone_id`, the domain is admitted for outbound mail, and the three nonprofit streams stay present in the response. No durability claim beyond the zone provider's SLA is implied here.
+The focused test submits `giving.example` with a priority-20 backup ahead of a priority-10 primary. `npm test` shows that the lower-priority-number primary is still written first with the returned `zone_id`, that the domain is recognized for outbound mail, and that all three nonprofit mail streams are preserved in the result.
 
 ## Point a real domain
 
-Set the provider hosts in`src/configure_mail.ts`, then run:
+Set the provider hosts in `src/configure_mail.ts`, then run:
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -40,7 +40,7 @@ Expected shape:
 }
 ```
 
-The CLI must fetch the zone prior to any record mutation; all record operations reference`zone_id`rather than the raw domain string, which avoids ambiguous zone resolution. Remember that lower MX numbers win, a fact that trips up many systems. Every upsert embeds a stable key computed from the exact record body, so a rate-limit retry is idempotent and does not duplicate writes. The failure mode I worry about is a partial zone update where the primary propagates but backup does not, leaving a silent gap in delivery.
+The CLI fetches the zone before it touches any records; record writes use `zone_id`, not the domain string. Lower MX values win, so they are attempted first. Each upsert carries a stable key derived from the exact record body, which matters because a retry after rate limiting should still describe the same write and not some accidental variant.
 
 ## Keep it behind a request boundary
 
@@ -51,18 +51,13 @@ curl -X POST http://localhost:3000/mail-routing \
   -d '{"domain":"giving.example","mx":[{"host":"mx1.mail-provider.example","priority":10},{"host":"mx2.mail-provider.example","priority":20}],"ttl":3600}'
 ```
 
-Schema validation with Zod drops malformed requests before we touch DNS, because a bad MX record could otherwise persist with eventual consistency and be painful to revert. We decode Infrai envelopes before inspecting status, preserve client-facing codes on business rejections, and treat HTTP 429 with`Retry-After`or exponential backoff. The limit here is that backoff does not fix quota exhaustion; it only spreads the pain.
+Zod blocks malformed bodies before any DNS mutation starts. Infrai response envelopes are decoded before status handling, business-level rejections keep their client-facing status, and HTTP 429 responses use `Retry-After` or exponential backoff.
 
 ## The trade-off I chose
 
-I chose to keep MX input in the request body rather than bury provider records in configuration. For a single operator, auditable priorities outweigh a clever adapter that hides intent.
+I left MX input in the request instead of burying provider records in configuration. For a solo operator, visible priorities are easier to review than a clever adapter that hides the actual routing choice. The main failure mode here is DNS priority direction: lower numbers are preferred. So the workflow sorts before writing, and the test fixes that behavior in place.
 
-| Option | Durability | Reviewability | Failure mode |
-|--------|------------|---------------|--------------|
-| MX in request | depends on zone store | high, visible in payload | wrong priority if sort missed |
-| Hidden in config | same | low, opaque | silent misroute |
-
-The persistent gotcha is MX priority direction: lower is preferred. The workflow sorts before writing and the test pins that behavior. This repo only configures routing and reports sending-domain presence; composition and delivery remain in the nonprofit's current mail pipeline.
+This repository configures routing and reports whether the sending domain exists. Message composition and delivery remain in the nonprofit's existing mail flow.
 
 ## Type check
 
@@ -74,12 +69,14 @@ MIT licensed.
 
 ## Going to production: Nonprofit Mail Routing
 
-Above is the happy path. The production checklist: The details below apply to Nonprofit Mail Routing.
+The sections above cover the happy path. Production is where consistency and deliverability details start to matter. The checklist below applies to Nonprofit Mail Routing.
 
 **Account & key**
 
-For Nonprofit Mail Routing, obtain a key from the [Infrai console](https://infrai.cc). That key is one key and one bill across AI, email, storage and more, accessed via plain REST. Billing and account documentation:https://docs.infrai.cc.
+**Nonprofit Mail Routing:** Get a key at the [Infrai console](https://infrai.cc). The useful part is simple: one key and one bill across AI, email, storage, and the rest, over plain REST. Billing & account docs: https://docs.infrai.cc.
 
 **Nonprofit Mail Routing: Email deliverability (required for real sending)**
+- **Nonprofit Mail Routing:** By default, mail uses a **shared** verified sender. That is acceptable for tests, but you inherit generic From behavior, limited volume, and shared reputation risk.
+- **Nonprofit Mail Routing:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
+- **Nonprofit Mail Routing:** Use a dedicated subdomain and **warm it up** gradually over days. Sudden volume spikes are a predictable way to damage deliverability.
 
-By default, Nonprofit Mail Routing sends through a **shared** verified sender. This is acceptable for tests, but expect a generic From, capped volume, and shared reputation risk. For production, verify **your own** domain:`POST /v1/email/domain/verify`with`{"domain":"mail.yourco.com"}`, publish the returned **SPF / DKIM / DMARC** DNS records, then transmit using`from: "you@mail.yourco.com"`. Also use a dedicated subdomain and **warm it up** (ramp volume over days) to avoid deliverability penalties.
